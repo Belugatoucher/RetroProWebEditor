@@ -8,6 +8,5 @@ Halftone
 CRT Scanlines
 RGB Split
 and more!
-
-This is almost entirely vibe coded, and it lacks some refinement I think it needs. 
+the project lacks some refinement I think it needs. 
 If you could like to help contribute to RetroPro, visit the issues page. 
