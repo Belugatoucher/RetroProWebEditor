@@ -1,0 +1,30 @@
+{
+  "id": "media.vngrd.retropro.fx",
+  "name": "RetroPro FX",
+  "version": "0.1.0",
+  "main": "index.html",
+  "manifestVersion": 5,
+  "host": [
+    {
+      "app": "PS",
+      "minVersion": "24.4.0",
+      "data": {
+        "apiVersion": 2
+      }
+    }
+  ],
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "retroproFxPanel",
+      "label": {
+        "default": "RetroPro FX"
+      },
+      "minimumSize": { "width": 300, "height": 400 },
+      "maximumSize": { "width": 600, "height": 2000 },
+      "preferredDockedSize": { "width": 360, "height": 720 },
+      "preferredFloatingSize": { "width": 360, "height": 720 }
+    }
+  ],
+  "requiredPermissions": {}
+}
