@@ -281,6 +281,7 @@
           <input type="checkbox" id="webgpuToggle" checked style="margin-left: 8px;" />
           <div class="val small" id="webgpuInfo" style="margin-left: 8px;">Initializing...</div>
           <button class="btn small" id="benchmarkBtn" style="margin-left: 8px;">Benchmark</button>
+          <div class="val small" id="benchResult" style="margin-left: 8px; min-width: 0; text-align: left;"></div>
         </div>
       </h3>
       <div class="content" id="effectsContent">
@@ -620,6 +621,21 @@ let gpuDevice = null;
 let gpuSampler = null;
 let gpuPipelines = {};
 let gpuReady = false;
+let gpuAdapterLabel = '';
+// User preference for GPU rendering, persisted so users on machines where
+// WebGPU is unavailable or misbehaves can leave it off. Kept as a plain flag
+// (not a DOM read) so the effects engine stays liftable out of this file.
+let gpuUserEnabled = true;
+try { gpuUserEnabled = localStorage.getItem('retropro-webgpu-enabled') !== '0'; } catch (e) {}
+
+function updateGPUStatus(text) {
+  const info = $('#webgpuInfo');
+  if (!info) return;
+  if (text) { info.textContent = text; return; }
+  if (!gpuUserEnabled) info.textContent = 'Off — CPU rendering';
+  else if (gpuReady) info.textContent = gpuAdapterLabel || 'WebGPU Ready';
+  else info.textContent = 'Not Available — CPU rendering';
+}
 
 // Fullscreen-quad vertex stage shared by every effect pipeline. Clip-space y
 // points up while texture v points down, so the flip happens here instead of
@@ -730,14 +746,16 @@ async function initWebGPU() {
   try {
     if (!navigator.gpu) {
       console.warn('WebGPU not available, falling back to CPU rendering');
-      if (info) info.textContent = 'Not Available';
+      if (info) info.textContent = 'Not Available — CPU rendering';
+      const t = $('#webgpuToggle'); if (t) t.checked = false;
       return false;
     }
 
     gpuAdapter = await navigator.gpu.requestAdapter();
     if (!gpuAdapter) {
       console.warn('No WebGPU adapter found, falling back to CPU rendering');
-      if (info) info.textContent = 'No Adapter';
+      if (info) info.textContent = 'No Adapter — CPU rendering';
+      const t = $('#webgpuToggle'); if (t) t.checked = false;
       return false;
     }
 
@@ -746,7 +764,8 @@ async function initWebGPU() {
       console.warn('WebGPU device lost:', e && e.message);
       gpuReady = false;
       gpuDevice = null;
-      if (info) info.textContent = 'Device Lost';
+      if (info) info.textContent = 'Device Lost — CPU rendering';
+      const t = $('#webgpuToggle'); if (t) t.checked = false;
     });
 
     gpuSampler = gpuDevice.createSampler({
@@ -759,17 +778,17 @@ async function initWebGPU() {
     createGPUPipelines();
     gpuReady = true;
 
-    if (info) {
-      const a = gpuAdapter.info || {};
-      info.textContent = [a.vendor, a.architecture || a.device].filter(Boolean).join(' | ') || 'WebGPU Ready';
-    }
+    const a = gpuAdapter.info || {};
+    gpuAdapterLabel = [a.vendor, a.architecture || a.device].filter(Boolean).join(' | ') || 'WebGPU Ready';
+    if (info) info.textContent = gpuAdapterLabel;
 
     console.log('WebGPU initialized successfully');
     return true;
   } catch (e) {
     console.warn('WebGPU initialization failed:', e);
     gpuReady = false;
-    if (info) info.textContent = 'Init Failed';
+    if (info) info.textContent = 'Init Failed — CPU rendering';
+    const t = $('#webgpuToggle'); if (t) t.checked = false;
     return false;
   }
 }
@@ -934,7 +953,7 @@ const Effects = {
 
   async dither(img, {algo, levels, strength}, forceCPU = false){
     // Try WebGPU first if available and enabled
-    if (!forceCPU && gpuReady && gpuPipelines.dither && $('#webgpuToggle').checked) {
+    if (!forceCPU && gpuReady && gpuPipelines.dither && gpuUserEnabled) {
       try {
         const params = new Float32Array([levels, strength, algo === 'ordered8' ? 1 : 0, 0]);
         const result = await runGPUEffect('dither', img, params);
@@ -1197,7 +1216,7 @@ const Effects = {
 
   async crt(img, {scan, vignette, curved, mask}){
     // Try WebGPU first if available and enabled
-    if (gpuReady && gpuPipelines.crt && $('#webgpuToggle').checked) {
+    if (gpuReady && gpuPipelines.crt && gpuUserEnabled) {
       try {
         const params = new Float32Array([scan, vignette, mask, curved ? 1 : 0, img.width, img.height, 0, 0]);
         const result = await runGPUEffect('crt', img, params);
@@ -1485,46 +1504,70 @@ function updateRenderStats(usedWebGPU) {
   }
 }
 
-// WebGPU performance benchmark
+// Performance benchmark: CPU dither vs WebGPU dither over a 1024×1024 image.
+// Runs CPU-only when WebGPU is unavailable so the button always shows a result.
 async function benchmarkWebGPU() {
-  if (!gpuReady) return;
+  const btn = $('#benchmarkBtn');
+  const result = $('#benchResult');
+  const say = (t) => { if (result) result.textContent = t; };
+  if (btn) btn.disabled = true;
+  try {
+    say('Benchmarking…');
+    console.log('Starting performance benchmark...');
+    await new Promise(r => setTimeout(r, 30)); // let the label paint
 
-  console.log('Starting WebGPU performance benchmark...');
+    // Create test image
+    const testImageData = new ImageData(1024, 1024);
+    for (let i = 0; i < testImageData.data.length; i += 4) {
+      testImageData.data[i] = Math.random() * 255;
+      testImageData.data[i + 1] = Math.random() * 255;
+      testImageData.data[i + 2] = Math.random() * 255;
+      testImageData.data[i + 3] = 255;
+    }
 
-  // Create test image
-  const testImageData = new ImageData(1024, 1024);
-  for (let i = 0; i < testImageData.data.length; i += 4) {
-    testImageData.data[i] = Math.random() * 255;
-    testImageData.data[i + 1] = Math.random() * 255;
-    testImageData.data[i + 2] = Math.random() * 255;
-    testImageData.data[i + 3] = 255;
-  }
+    // Benchmark CPU rendering (forceCPU skips the GPU path); yield between
+    // iterations so the progress label stays live
+    let cpuTime = 0;
+    for (let i = 0; i < 10; i++) {
+      const t0 = performance.now();
+      await Effects.dither(testImageData, {algo: 'floyd', levels: 4, strength: 1}, true);
+      cpuTime += performance.now() - t0;
+      say(`Benchmarking… CPU ${i + 1}/10`);
+      await new Promise(r => setTimeout(r, 0));
+    }
 
-  // Benchmark CPU rendering (forceCPU skips the GPU path)
-  const cpuStart = performance.now();
-  for (let i = 0; i < 10; i++) {
-    await Effects.dither(testImageData, {algo: 'floyd', levels: 4, strength: 1}, true);
-  }
-  const cpuTime = performance.now() - cpuStart;
+    if (!gpuReady || !gpuUserEnabled) {
+      const why = gpuReady ? 'WebGPU is off' : 'WebGPU not available';
+      say(`CPU: ${cpuTime.toFixed(0)}ms — ${why}`);
+      console.log(`Benchmark: CPU ${cpuTime.toFixed(2)}ms (${why})`);
+      return;
+    }
 
-  // Benchmark WebGPU rendering
-  const params = new Float32Array([4, 1, 0, 0]);
-  const gpuStart = performance.now();
-  for (let i = 0; i < 10; i++) {
+    // Benchmark WebGPU rendering (one warm-up pass first)
+    const params = new Float32Array([4, 1, 0, 0]);
     await runGPUEffect('dither', testImageData, params);
-  }
-  const gpuTime = performance.now() - gpuStart;
+    let gpuTime = 0;
+    for (let i = 0; i < 10; i++) {
+      const t0 = performance.now();
+      await runGPUEffect('dither', testImageData, params);
+      gpuTime += performance.now() - t0;
+      say(`Benchmarking… GPU ${i + 1}/10`);
+    }
 
-  const speedup = cpuTime / gpuTime;
-  console.log(`Performance Benchmark Results:`);
-  console.log(`CPU: ${cpuTime.toFixed(2)}ms`);
-  console.log(`WebGPU: ${gpuTime.toFixed(2)}ms`);
-  console.log(`Speedup: ${speedup.toFixed(2)}x`);
+    const speedup = cpuTime / gpuTime;
+    say(`WebGPU ${gpuTime.toFixed(0)}ms vs CPU ${cpuTime.toFixed(0)}ms — ${speedup.toFixed(1)}x faster`);
+    console.log(`Performance Benchmark Results:`);
+    console.log(`CPU: ${cpuTime.toFixed(2)}ms`);
+    console.log(`WebGPU: ${gpuTime.toFixed(2)}ms`);
+    console.log(`Speedup: ${speedup.toFixed(2)}x`);
 
-  // Update UI
-  const statsElement = $('#renderStats');
-  if (statsElement) {
-    statsElement.textContent = `WebGPU: ${speedup.toFixed(1)}x faster`;
+    // Update UI
+    const statsElement = $('#renderStats');
+    if (statsElement) {
+      statsElement.textContent = `WebGPU: ${speedup.toFixed(1)}x faster`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -2081,8 +2124,15 @@ function promptForSolidLayer() {
   addSolidLayer();
   $('#mi-new-trans').addEventListener('click', addTransparentLayer);
   
-  // Initialize WebGPU (async — re-renders once the GPU device is ready)
-  initWebGPU().then(() => schedule());
+  // Initialize WebGPU unless the user previously turned it off
+  // (async — re-renders once the GPU device is ready)
+  if (gpuUserEnabled) {
+    initWebGPU().then(() => schedule());
+  } else {
+    const t = $('#webgpuToggle');
+    if (t) t.checked = false;
+    updateGPUStatus();
+  }
   
   pushHistory();
   syncLayerControls();
@@ -2418,17 +2468,22 @@ if (!curvesCanvas) {
   drawCurves();
 }
 
-// WebGPU toggle handler
+// WebGPU toggle handler — the choice persists across sessions so users on
+// machines without (working) WebGPU can leave it off for CPU rendering
 $('#webgpuToggle').addEventListener('change', async (e) => {
+  gpuUserEnabled = e.target.checked;
+  try { localStorage.setItem('retropro-webgpu-enabled', gpuUserEnabled ? '1' : '0'); } catch (err) {}
   if (e.target.checked && !gpuReady) {
     // Try to reinitialize WebGPU
     if (await initWebGPU()) {
       console.log('WebGPU reinitialized successfully');
     } else {
       e.target.checked = false;
+      gpuUserEnabled = false;
       console.warn('WebGPU initialization failed');
     }
   }
+  updateGPUStatus();
   schedule(); // Re-render with new setting
 });
 
@@ -2445,6 +2500,28 @@ console.log('RetroPro Console initialized. Type JavaScript code to execute.');
 console.log('Available globals: state, Effects, console');
 console.log('WebGPU Support:', navigator.gpu ? 'Supported by browser' : 'Not supported');
 console.log('Try: console.log(state.effects) or state.adjustments.curves.enabled = true');
+
+/* ========= Embedding API =========
+   Stable surface for hosting RetroPro inside a wrapper (Electron, Tauri, a
+   web view) and the seam for splitting the effects engine into a standalone
+   module or Photoshop UXP plugin later. Everything here operates on plain
+   ImageData in/out and does not touch the editor UI:
+     RetroProFX.Effects        — all effect/adjustment functions (dither and
+                                 crt are async; the rest are sync)
+     RetroProFX.initWebGPU()   — set up the GPU device, resolves true/false
+     RetroProFX.runGPUEffect() — run one WGSL pipeline directly
+     RetroProFX.benchmark()    — CPU vs GPU timing
+     RetroProFX.gpuReady       — whether a WebGPU device is live (read-only)
+     RetroProFX.gpuEnabled     — user preference gate for the GPU path */
+window.RetroProFX = {
+  Effects,
+  initWebGPU,
+  runGPUEffect,
+  benchmark: benchmarkWebGPU,
+  get gpuReady() { return gpuReady; },
+  get gpuEnabled() { return gpuUserEnabled; },
+  set gpuEnabled(v) { gpuUserEnabled = !!v; }
+};
 
 function refreshHistoryUI(){
   const list = $('#historyList');
