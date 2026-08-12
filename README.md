@@ -2,6 +2,8 @@
 HTML CSS JS browser based image editor. Just download the HTML file and run it in a browser.
 For crunchy effects and destructive editing.
 
+RetroPro3.2.2-WebGPU.html is a fork of 3.2.2 with the GPU renderer rebuilt on WebGPU (WGSL shaders) instead of WebGL. It needs a WebGPU-capable browser (Chrome/Edge 113+, recent Firefox/Safari) and falls back to CPU rendering everywhere else.
+
 Currently Supports:
 Dithering (more algorithms coming soon)
 Halftone
